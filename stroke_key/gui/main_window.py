@@ -93,6 +93,6 @@ class MainWindow(QMainWindow):
 
     def view_samples(self) -> None:
         try:
-            SampleViewer(self.samples, self).exec()
+            SampleViewer(self.samples, self, users=self.users.list_users()).exec()
         except Exception:
             show_error(self, "Could not open stored samples. Check the local database.")

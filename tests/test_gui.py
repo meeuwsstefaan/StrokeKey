@@ -1,5 +1,6 @@
 """Offscreen Qt integration exercises real events and local synthetic workflows."""
 import os
+import sqlite3
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
@@ -8,6 +9,7 @@ from PySide6.QtGui import QEventPoint, QInputDevice, QMouseEvent, QPointingDevic
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from stroke_key.gui.enrollment_dialog import EnrollmentDialog
+from stroke_key.gui.capture_panel import CapturePanel
 from stroke_key.gui.main_window import CaptureDialog, MainWindow
 from stroke_key.gui.sample_viewer import SampleViewer
 from stroke_key.gui.signature_canvas import SignatureCanvas
@@ -47,6 +49,8 @@ def test_mouse_capture_and_stroke_render(app, monkeypatch):
     assert sample.number_of_strokes == 2
     assert not validity_errors(sample)
     assert all(p.pressure is None for p in sample.points)
+    assert sample.metadata["sensor_capabilities"] == {"mouse": ["position"]}
+    assert sample.metadata["session_id"]
     image = canvas.grab().toImage()
     assert image.pixelColor(10, 20).lightness() < 200
     assert image.pixelColor(200, 45).lightness() > 240  # no bridge across strokes
@@ -75,6 +79,9 @@ def test_tablet_capabilities(app, has_pressure):
     assert point.tilt_x == (12 if has_pressure else None)
     assert point.tilt_y == (-5 if has_pressure else None)
     assert point.orientation is None
+    sensors = canvas.sample().metadata["sensor_capabilities"]["stylus"]
+    assert ("pressure" in sensors) == has_pressure
+    assert ("tilt_x" in sensors) == has_pressure
 
 
 def test_touch_capture_single_contact_and_cancellation(app):
@@ -139,7 +146,80 @@ def test_dialog_workflow_and_viewer(app, tmp_path, sample_factory, monkeypatch):
         app.processEvents()
         assert len(viewer.figure.axes) == 3
         assert "60 points" in viewer.metadata.text()
+        assert viewer.report.profile.sample_count == 4
+        assert viewer.current_sample.sample_id not in viewer.report.profile.reference_ids
+        assert viewer.feature_table.rowCount() == 12
+        viewer.tabs.setCurrentIndex(1)
+        app.processEvents()
+        viewer.analysis_plot.draw()
+        assert viewer.reference_selector.count() == 5
+        viewer.reference_selector.setCurrentIndex(0)
+        assert len(viewer.analysis_figure.axes) == 3
         viewer.close()
         main.close()
+    finally:
+        database.close()
+
+
+def test_capture_session_labels_quality_and_clear(app, sample_factory):
+    panel = CapturePanel()
+    session_id = panel.canvas.session_id
+    panel.canvas.recorder.points = sample_factory().points
+    panel.session_tag.setText("Synthetic morning session")
+    panel.research_label.setCurrentIndex(panel.research_label.findData("genuine"))
+    panel.update_status()
+    assert not panel.new_session_button.isEnabled()
+    sample = panel.validated_sample()
+    assert sample.metadata["session_id"] == session_id
+    assert sample.metadata["session_tag"] == "Synthetic morning session"
+    assert sample.metadata["research_label"] == "genuine"
+    assert "59.0 Hz" in panel.quality.toPlainText()
+    panel.canvas.clear()
+    assert panel.canvas.session_id == session_id
+    assert panel.new_session_button.isEnabled()
+    panel.new_session_button.click()
+    assert panel.canvas.session_id != session_id
+    assert panel.session_tag.text() == ""
+
+
+def test_viewer_draft_profile_selection_and_corrupt_reference_recovery(app, tmp_path, sample_factory, monkeypatch):
+    monkeypatch.setattr("stroke_key.gui.sample_viewer.show_error", lambda *args: None)
+    database = Database(tmp_path / "viewer.db")
+    try:
+        samples, users = SampleRepository(database), UserRepository(database)
+        service = EnrollmentService(users, samples)
+        references = [sample_factory(duration=1 + i / 10) for i in range(5)]
+        for sample in references:
+            service.stage(sample)
+        user = service.complete("Synthetic participant", [s.sample_id for s in references])
+        draft = sample_factory(duration=3)
+        samples.save(draft)
+        viewer = SampleViewer(samples, users=[user])
+        draft_row = next(i for i, row in enumerate(viewer.rows) if row["sample_id"] == draft.sample_id)
+        viewer.list.setCurrentRow(draft_row)
+        assert viewer.profile_selector.isEnabled()
+        assert viewer.report.profile.sample_count == 0
+        viewer.profile_selector.setCurrentIndex(viewer.profile_selector.findData(user.user_id))
+        assert viewer.report.profile.sample_count == 5
+        assert viewer.reference_selector.count() == 6
+        # Simulate external corruption after explicitly bypassing the new immutability guard.
+        with pytest.raises(sqlite3.IntegrityError):
+            database.connection.execute("UPDATE signature_samples SET metadata = 'broken' WHERE sample_id = ?",
+                                        (references[0].sample_id,))
+        with database.connection:
+            database.connection.execute("DROP TRIGGER protect_signature_samples_update")
+            database.connection.execute("UPDATE signature_samples SET metadata = 'broken' WHERE sample_id = ?",
+                                        (references[0].sample_id,))
+        viewer.update_analysis()
+        assert viewer.report.profile.sample_count == 4
+        assert "1 unreadable" in viewer.profile_summary.text()
+        bad_row = next(i for i, row in enumerate(viewer.rows) if row["sample_id"] == references[0].sample_id)
+        viewer.list.setCurrentRow(bad_row)
+        assert viewer.current_sample is None
+        assert viewer.report is None
+        assert viewer.feature_table.rowCount() == 0
+        viewer.list.setCurrentRow(draft_row)
+        assert viewer.current_sample.sample_id == draft.sample_id
+        viewer.close()
     finally:
         database.close()

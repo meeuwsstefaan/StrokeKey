@@ -11,6 +11,8 @@ class CaptureConfig:
     pause_seconds: float = 0.150
     pause_speed: float = 5.0  # raw canvas pixels / second
     enrollment_samples: int = 5
+    quality_gap_seconds: float = 0.100
+    quality_min_rate_hz: float = 20.0
 
 
 @dataclass(frozen=True)

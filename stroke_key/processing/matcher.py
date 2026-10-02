@@ -12,6 +12,8 @@ from stroke_key.processing.dtw import dtw_distance
 from stroke_key.processing.features import extract_features
 from stroke_key.processing.normalize import normalize_signature
 
+MATCHER_VERSION = "dtw-weighted-v1"
+
 
 @dataclass(frozen=True)
 class MatchResult:

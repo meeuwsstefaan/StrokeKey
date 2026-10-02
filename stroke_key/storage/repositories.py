@@ -6,6 +6,7 @@ import sqlite3
 from stroke_key.models.signature import SignaturePoint, SignatureSample, measurement_errors
 from stroke_key.models.user import User
 from stroke_key.storage.database import Database
+from stroke_key.storage.transactions import atomic
 
 
 class StoredDataError(ValueError):
@@ -39,12 +40,14 @@ class SampleRepository:
             [(sample.sample_id, index, *astuple(point)) for index, point in enumerate(sample.points)])
 
     def save(self, sample: SignatureSample) -> None:
-        with self.connection:
+        with atomic(self.connection):
             self._insert(sample)
 
     def list_summaries(self) -> list[sqlite3.Row]:
         return self.connection.execute(
-            "SELECT s.*, COUNT(p.point_index) AS point_count FROM signature_samples s "
+            "SELECT s.*, COUNT(p.point_index) AS point_count, "
+            "EXISTS (SELECT 1 FROM research_trials t WHERE t.candidate_sample_id = s.sample_id) AS is_research_trial "
+            "FROM signature_samples s "
             "LEFT JOIN signature_points p ON s.sample_id = p.sample_id "
             "GROUP BY s.sample_id ORDER BY s.created_at DESC").fetchall()
 
@@ -72,13 +75,30 @@ class SampleRepository:
             "SELECT sample_id FROM signature_samples WHERE user_id = ? ORDER BY created_at", (user_id,)).fetchall()
         return [self.get(row[0]) for row in rows]
 
+    def enrollment_references(self, user_id: str) -> list[SignatureSample]:
+        """Only published latest reference revisions contribute to live verification."""
+        rows = self.connection.execute(
+            "SELECT m.sample_id FROM reference_set_samples m JOIN reference_sets r "
+            "ON r.reference_set_id = m.reference_set_id WHERE r.user_id = ? AND r.sealed = 1 "
+            "AND r.revision = (SELECT MAX(s.revision) FROM reference_sets s "
+            "WHERE s.user_id = r.user_id AND s.device_group = r.device_group AND s.sealed = 1) "
+            "ORDER BY r.device_group, m.ordinal", (user_id,)).fetchall()
+        return [self.get(row[0]) for row in rows]
+
+    def is_trial(self, sample_id: str) -> bool:
+        return self.connection.execute("SELECT 1 FROM research_trials WHERE candidate_sample_id = ?",
+                                       (sample_id,)).fetchone() is not None
+
     def delete_unassigned(self, sample_id: str) -> None:
-        with self.connection:
+        with atomic(self.connection):
+            if self.is_trial(sample_id):
+                raise ValueError("Research trials cannot be removed through enrollment draft retry")
             self.connection.execute("DELETE FROM signature_samples WHERE sample_id = ? AND user_id IS NULL", (sample_id,))
 
 
 class UserRepository:
     def __init__(self, database: Database) -> None:
+        self.database = database
         self.connection = database.connection
 
     def list_users(self) -> list[User]:
@@ -87,7 +107,9 @@ class UserRepository:
 
     def enroll(self, user: User, samples: list[SignatureSample]) -> None:
         """Associate staged samples and identity atomically; failure leaves drafts intact."""
-        with self.connection:
+        from stroke_key.storage.research_repositories import ReferenceSetRepository
+
+        with atomic(self.connection):
             self.connection.execute("INSERT INTO users VALUES (?, ?, ?, ?)",
                                     (user.user_id, user.name, user.created_at,
                                      json.dumps(user.enrollment_statistics, allow_nan=False)))
@@ -97,3 +119,4 @@ class UserRepository:
                     (user.user_id, sample.sample_id))
                 if cursor.rowcount != 1:
                     raise ValueError("An enrollment draft is missing or already assigned")
+            ReferenceSetRepository(self.database).create_groups(user.user_id, [s.sample_id for s in samples])

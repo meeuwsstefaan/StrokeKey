@@ -1,10 +1,12 @@
 """Enrollment drafts are persisted after each accepted sample."""
 from statistics import mean, pstdev
+from dataclasses import asdict
 
 from stroke_key.config import CAPTURE_CONFIG
 from stroke_key.models.signature import SignatureSample, validity_errors
 from stroke_key.models.user import User
 from stroke_key.processing.features import extract_features
+from stroke_key.processing.profiles import PROFILE_VERSION, device_ids, summarize_profile
 from stroke_key.storage.repositories import SampleRepository, UserRepository
 
 
@@ -25,14 +27,18 @@ class EnrollmentService:
         if len(sample_ids) != CAPTURE_CONFIG.enrollment_samples or len(set(sample_ids)) != len(sample_ids):
             raise ValueError("Enrollment requires five distinct samples.")
         samples = [self.samples.get(sample_id) for sample_id in sample_ids]
-        if any(validity_errors(sample) or sample.user_id is not None for sample in samples):
+        if any(validity_errors(sample) or sample.user_id is not None or self.samples.is_trial(sample.sample_id)
+               for sample in samples):
             raise ValueError("Enrollment references are invalid or already assigned.")
         features = [extract_features(sample) for sample in samples]
         durations = [f.total_duration for f in features]
+        groups = sorted({(s.device_type, device_ids(s)) for s in samples})
+        profiles = [asdict(summarize_profile(samples, input_type, ids)) for input_type, ids in groups]
         user = User(name.strip(), enrollment_statistics={
             "sample_count": len(samples), "duration_mean": mean(durations),
             "duration_std": pstdev(durations),
             "path_length_mean": mean(f.total_path_length for f in features),
-            "stroke_count_mean": mean(f.number_of_strokes for f in features)})
+            "stroke_count_mean": mean(f.number_of_strokes for f in features),
+            "analysis_profile_version": PROFILE_VERSION, "signing_profiles": profiles})
         self.users.enroll(user, samples)
         return user

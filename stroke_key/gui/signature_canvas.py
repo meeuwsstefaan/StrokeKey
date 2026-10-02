@@ -1,4 +1,5 @@
 """Qt adapters for mouse, tablet and a single active touch contact."""
+from uuid import uuid4
 from PySide6.QtCore import QEvent, QPointF, Qt, Signal
 from PySide6.QtGui import (QColor, QEventPoint, QInputDevice, QMouseEvent,
                           QPainter, QPaintEvent, QPen, QTabletEvent, QTouchEvent)
@@ -15,6 +16,8 @@ class SignatureCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.recorder = SignatureRecorder()
+        self.session_id = str(uuid4())
+        self._capabilities: dict[str, list[str]] = {}
         self._touch_id: int | None = None
         self.setMinimumSize(650, 300)
         self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
@@ -24,16 +27,23 @@ class SignatureCanvas(QWidget):
     def clear(self) -> None:
         self.recorder.clear()
         self._touch_id = None
+        self._capabilities.clear()
         self.update()
         self.changed.emit()
 
     def sample(self) -> SignatureSample:
         sample = self.recorder.sample()
-        sample.metadata.update({"canvas_width": self.width(), "canvas_height": self.height()})
+        sample.metadata.update({"canvas_width": self.width(), "canvas_height": self.height(),
+                                "session_id": self.session_id, "capture_metadata_version": 1,
+                                "sensor_capabilities": {key: list(value) for key, value in self._capabilities.items()}})
         return sample
 
-    def _record(self, measurement: PointerMeasurement, state: str) -> None:
+    def _record(self, measurement: PointerMeasurement, state: str,
+                capabilities: list[str] | None = None) -> None:
         recorded = self.recorder.record(measurement, state)
+        if recorded:
+            known = set(self._capabilities.get(measurement.device_type, []))
+            self._capabilities[measurement.device_type] = sorted(known | set(capabilities or ["position"]))
         if recorded or self.recorder.interrupted:
             self.update()
             self.changed.emit()
@@ -70,9 +80,18 @@ class SignatureCanvas(QWidget):
             tilt_y = event.yTilt() if capabilities & QInputDevice.Capability.YTilt else None
             rotation = event.rotation() if capabilities & QInputDevice.Capability.Rotation else None
             self._record(PointerMeasurement(position.x(), position.y(), "stylus", pressure,
-                                            tilt_x, tilt_y, rotation, event.buttons().value,
-                                            str(event.pointingDevice().systemId())), state)
+                                             tilt_x, tilt_y, rotation, event.buttons().value,
+                                             str(event.pointingDevice().systemId())), state,
+                         self._sensor_names(capabilities))
         event.accept()  # Prevent duplicate Qt-synthesized mouse capture.
+
+    @staticmethod
+    def _sensor_names(capabilities) -> list[str]:
+        sensors = ((QInputDevice.Capability.Pressure, "pressure"),
+                   (QInputDevice.Capability.XTilt, "tilt_x"),
+                   (QInputDevice.Capability.YTilt, "tilt_y"),
+                   (QInputDevice.Capability.Rotation, "orientation"))
+        return ["position"] + [name for capability, name in sensors if capabilities & capability]
 
     def event(self, event: QEvent) -> bool:
         touch_types = {QEvent.Type.TouchBegin, QEvent.Type.TouchUpdate, QEvent.Type.TouchEnd}
@@ -91,7 +110,8 @@ class SignatureCanvas(QWidget):
                     position = point.position()
                     pressure = point.pressure() if event.pointingDevice().capabilities() & QInputDevice.Capability.Pressure else None
                     self._record(PointerMeasurement(position.x(), position.y(), "touch", pressure,
-                                                    device_id=str(event.pointingDevice().systemId())), state)
+                                                    device_id=str(event.pointingDevice().systemId())), state,
+                                 self._sensor_names(event.pointingDevice().capabilities()))
                 if state == "up":
                     self._touch_id = None
             event.accept()

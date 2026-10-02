@@ -93,6 +93,57 @@ exclude pen-up jumps; the coordinate plot preserves separate strokes. Velocity
 is measured between consecutive points within a stroke. Missing pressure is
 explicitly displayed. Unreadable records produce a friendly message.
 
+### Analyze Sample
+
+The viewer now has **Raw sample**, **Analyze Sample**, and **Record metadata** tabs.
+For an enrolled sample, analysis automatically uses its participant's enrollment
+references and excludes the selected sample. For an unassigned capture or draft,
+choose an **Enrollment profile** to compare it to. Choose an **Overlay** reference
+or **No overlay**. The normalized view colours strokes by speed, outlines pause
+starts, and shades detected pause intervals on the speed plot. Stroke boundaries
+are preserved in both views.
+
+**Feature comparisons** shows the selected measurement, reference median, observed
+minimum/maximum, contributing reference count, and whether the measurement falls
+inside or outside that range. **Measured explanations** describes the differences;
+**Capture quality** reports sampling intervals, gaps, equal-time segments and sensor
+coverage. These are descriptive statistics, not a trained AI model, a calibrated
+confidence score, or evidence of authenticity. At least two eligible references
+are required for range comparisons. Five samples from one session cannot establish
+normal variation across days.
+
+Profiles compare the same input type, reject known device-ID mismatches, and skip
+invalid or unreadable references. Spatial features and speeds use aspect-preserving
+unit-box normalization; duration and pauses retain their actual seconds. Pauses
+use the existing raw-pixel speed heuristic. Pressure comparisons additionally
+require matching reported device IDs and complete, varying pressure signals;
+missing or constant pressure is never inferred. Device IDs are driver reports,
+not proof of calibration. Legacy records without session metadata still work,
+with their session coverage shown as unknown.
+
+### Collection sessions and capture quality
+
+Capture panels display a generated **Session** UUID, an optional session note,
+and a self-reported research label: unlabelled, genuine, attempted imitation, or
+synthetic/demonstration. The label is collection metadata; it is not inferred by
+the application and does not alter the existing verification decision. Each dialog
+starts a new session. **Clear** and saving preserve that session; **New session**
+is available after clearing the canvas. Keep repeated captures from the same
+collection session grouped, and start another session for a later collection.
+
+New captures preserve session IDs, notes, labels, canvas dimensions, and reported
+sensor capabilities in the existing JSON metadata. These analysis fields do not
+require changes to the raw sample tables. Enrollment also stores versioned descriptive profile snapshots; viewer
+profiles are recomputed from raw references to allow exclusion of the selected
+sample. No existing records are rewritten.
+
+After pointer release, capture quality appears below the canvas. Gaps greater than
+100 ms within a stroke, median sampling below 20 Hz, duplicate timestamps, partial
+or constant pressure, and mixed input are flagged for review. Pen-up gaps are
+treated as possible pauses rather than lost within-stroke events. Quality warnings
+are advisory; existing validity errors still prevent saving. These initial
+thresholds are configurable in `CaptureConfig` and need real-device validation.
+
 ## Mouse, touchscreen, stylus, and Samsung tablets
 
 - Mouse supplies coordinates, event timing, and stroke boundaries. Pressure and
@@ -137,8 +188,8 @@ matching runs separately, so SQLite connections never cross threads.
 
 ## Data format
 
-Schema version 1 uses three tables: `users`, `signature_samples`, and
-`signature_points`. Each sample has a UUID, optional user UUID, UTC creation time,
+Schema version 2 preserves the original three tables: `users`, `signature_samples`,
+and `signature_points`. Each sample has a UUID, optional user UUID, UTC creation time,
 input type, duration, stroke count, and JSON metadata. Measurements have an
 explicit point index and these columns:
 
@@ -162,6 +213,57 @@ Raw data remains unchanged during processing. Normalization produces a separate
 copy translated to bounding-box origin and uniformly scaled to fit a requested
 width/height (default 1×1). Relative time starts at zero; actual durations, absolute
 timestamps, sensor values and stroke membership are preserved.
+
+### Phase 1: reproducible research storage
+
+Startup creates schema version 2 for a new database, or upgrades version 1 in one
+transaction. Before upgrading an existing database, SQLite's backup API creates
+a local sibling file named `strokekey.db-v1-backup-<timestamp>-<id>`. The schema,
+backfill and version advance all roll back if migration fails. Existing raw rows,
+participants and metadata are preserved exactly. Unknown legacy session metadata
+remains unknown. Future unsupported schema versions are rejected without being
+downgraded. Backup files contain the same unencrypted biometric data as the database.
+
+The additional tables are:
+
+| Tables | Purpose |
+| --- | --- |
+| `reference_sets`, `reference_set_samples` | Ordered, versioned enrollment references grouped by participant, input type and reported device IDs |
+| `research_trials` | Separate candidate sample, claimed participant, optional reported signer, declared attempt type, session, consent confirmation and matcher/result snapshots |
+| `evaluation_runs`, `evaluation_run_trials` | Saved evaluation selections, matcher configuration and results linked to immutable trials |
+
+Migration publishes initial reference sets for existing enrollments without
+reinterpreting or repairing the raw data. New enrollment completion publishes
+reference sets atomically with participant creation and sample association.
+Verification reads the latest published revision of each enrollment device group.
+Publishing another revision leaves all older versions intact; merely saving an
+assigned sample does not automatically add it to live verification.
+
+Published reference sets and their raw measurements are immutable. Saved trial
+records, candidate measurements, evaluation snapshots and selections are also
+immutable. SQL triggers and foreign keys prevent ordinary writes or deletes that
+would change recorded evidence. This is data-integrity protection, not encryption
+or protection against someone who can replace the file or remove SQL triggers.
+Unassigned drafts retain their existing retry/delete workflow, while research
+trial candidates cannot be retried or promoted into enrollment.
+
+Backend entry points in `storage/research_repositories.py`:
+
+- `ReferenceSetRepository.create`, `get`, `latest_for_user`, and `samples_for` publish and read reference versions.
+- `ResearchTrialRepository.save(candidate, trial)` atomically saves a fresh candidate and explicit trial; `get` and `list_trials` read snapshots.
+- `EvaluationRunRepository.save`, `get`, and `list_runs` preserve evaluation records.
+
+`models/research.py` defines these records. Trial persistence checks consent,
+declaration consistency, capture/session consistency, a complete compatible
+reference set, the full matcher configuration, per-reference score coverage,
+decisions against the saved threshold, and median aggregation. Saved JSON metrics
+must be finite; unavailable evaluation rates should use `null` rather than NaN.
+Repository transactions use nested savepoints so a downstream failure rolls back
+the entire calling workflow.
+
+Phase 1 supplies persistence and existing-workflow integration. The guided
+enrollment interface, trial-collection interface and evaluation dashboard remain
+the next three phases. Ordinary verification still does not save candidates.
 
 ## Features and current matching algorithm
 
@@ -235,8 +337,13 @@ not establish hardware compatibility.
 
 ## Planned improvements
 
-The recommended next step is a **consented, repeatable capture and evaluation
-protocol**: verify devices, sampling rates, repeatability and quality; then measure
+The first analysis milestone provides capture diagnostics, collection-session
+metadata, personal profiles, overlays and measured explanations. Phase 1 adds
+transactional migration and reproducible reference/trial/evaluation storage.
+Phase 2 will add guided enrollment and later-session extensions, followed by
+Phase 3 trial collection and Phase 4 evaluation. Research still requires a
+**consented, repeatable capture and evaluation protocol**: verify
+devices, sampling rates, repeatability and quality across sessions; then measure
 genuine/impostor distributions, FAR/FRR and EER before changing thresholds.
 Follow with stroke-aware resampling/interpolation, device calibration and richer
 timing/pressure/tilt features. Later research may add local Android/S Pen capture,

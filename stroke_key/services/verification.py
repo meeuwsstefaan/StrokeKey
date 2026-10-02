@@ -26,7 +26,7 @@ class VerificationService:
         errors = validity_errors(candidate)
         if errors:
             raise ValueError("\n".join(errors))
-        references = self.samples.for_user(user_id)
+        references = self.samples.enrollment_references(user_id)
         if len(references) < 5 or any(validity_errors(reference) for reference in references):
             raise ValueError("This user does not have a complete valid enrollment.")
         return references
