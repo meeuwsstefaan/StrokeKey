@@ -43,6 +43,9 @@ class SampleRepository:
         with atomic(self.connection):
             self._insert(sample)
 
+    def exists(self, sample_id: str) -> bool:
+        return self.connection.execute("SELECT 1 FROM signature_samples WHERE sample_id = ?", (sample_id,)).fetchone() is not None
+
     def list_summaries(self) -> list[sqlite3.Row]:
         return self.connection.execute(
             "SELECT s.*, COUNT(p.point_index) AS point_count, "

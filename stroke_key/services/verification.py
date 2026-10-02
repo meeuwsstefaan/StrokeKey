@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 
 from stroke_key.models.signature import SignatureSample, validity_errors
-from stroke_key.config import CAPTURE_CONFIG
+from stroke_key.config import CAPTURE_CONFIG, MATCH_CONFIG, MatchConfig
 from stroke_key.processing.compatibility import compatible_inputs
 from stroke_key.processing.matcher import MatchResult, aggregate_matches, compare_signatures
 from stroke_key.storage.repositories import SampleRepository
@@ -14,10 +14,11 @@ class VerificationReport:
     comparisons: list[tuple[str, MatchResult]]
 
 
-def compare_references(candidate: SignatureSample, references: list[SignatureSample]) -> VerificationReport:
+def compare_references(candidate: SignatureSample, references: list[SignatureSample],
+                       config: MatchConfig = MATCH_CONFIG) -> VerificationReport:
     """Pure comparison, safe to run in a worker without SQLite access."""
-    comparisons = [(r.sample_id, compare_signatures(candidate, r)) for r in references]
-    return VerificationReport(aggregate_matches([result for _, result in comparisons]), comparisons)
+    comparisons = [(r.sample_id, compare_signatures(candidate, r, config)) for r in references]
+    return VerificationReport(aggregate_matches([result for _, result in comparisons], config), comparisons)
 
 
 class VerificationService:

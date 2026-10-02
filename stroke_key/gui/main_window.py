@@ -8,8 +8,11 @@ from stroke_key.gui.enrollment_dialog import EnrollmentDialog
 from stroke_key.gui.errors import show_error
 from stroke_key.gui.sample_viewer import SampleViewer
 from stroke_key.gui.verification_dialog import VerificationDialog
+from stroke_key.gui.trial_dialog import TrialDialog
+from stroke_key.gui.trial_viewer import TrialViewer
 from stroke_key.services.enrollment import EnrollmentService
 from stroke_key.services.verification import VerificationService
+from stroke_key.services.trials import TrialCollectionService
 from stroke_key.storage.database import Database
 from stroke_key.storage.repositories import SampleRepository, UserRepository
 
@@ -52,8 +55,9 @@ class MainWindow(QMainWindow):
         self.users = UserRepository(database)
         self.enrollment = EnrollmentService(self.users, self.samples)
         self.verification = VerificationService(self.samples)
+        self.trial_collection = TrialCollectionService(database)
         self.setWindowTitle("StrokeKey")
-        self.resize(620, 480)
+        self.resize(620, 600)
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(45, 35, 45, 35)
@@ -70,7 +74,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(notice)
         layout.addSpacing(20)
         for text, action in (("Capture Sample", self.capture_sample), ("Enroll User", self.enroll_user),
-                             ("Verify Signature", self.verify_signature), ("View Samples", self.view_samples),
+                             ("Verify Signature", self.verify_signature),
+                             ("Collect Research Trial", self.collect_trial), ("View Research Trials", self.view_trials),
+                             ("View Samples", self.view_samples),
                              ("Exit", self.close)):
             button = QPushButton(text)
             button.setMinimumHeight(40)
@@ -99,3 +105,15 @@ class MainWindow(QMainWindow):
             SampleViewer(self.samples, self, users=self.users.list_users()).exec()
         except Exception:
             show_error(self, "Could not open stored samples. Check the local database.")
+
+    def collect_trial(self) -> None:
+        try:
+            TrialDialog(self.trial_collection, self.users.list_users(), self).exec()
+        except Exception:
+            show_error(self, "Could not open research trial collection. Check the local database.")
+
+    def view_trials(self) -> None:
+        try:
+            TrialViewer(self.trial_collection.trials, self.users.list_users(), self).exec()
+        except Exception:
+            show_error(self, "Could not open saved research trials. Check the local database.")

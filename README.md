@@ -40,7 +40,8 @@ python main.py
 ```
 
 In PyCharm, run `main.py` with the project's interpreter. A native desktop window
-opens with Capture Sample, Enroll User, Verify Signature, View Samples, and Exit.
+opens with Capture Sample, Enroll User, Verify Signature, Collect Research Trial,
+View Research Trials, View Samples, and Exit.
 The database is created automatically at `data/strokekey.db`, resolved relative
 to the source project rather than the current working directory. The source
 installation must have a writable `data` directory. No server is needed.
@@ -115,6 +116,55 @@ similarities, plus each reference's overall/DTW scores, durations and stroke cou
 No enrolled users produces an explanatory empty state. Missing or malformed
 references cause a visible error rather than silent acceptance. Verification
 candidates are not saved automatically. Comparisons run in a worker thread.
+
+## Phase 3: research trial collection
+
+Choose **Collect Research Trial** for deliberate collection, separate from ordinary
+verification. Select the **Claimed participant**, optional **Reported signer**,
+and **Declared attempt** before comparing. Supported declarations are unlabelled,
+genuine, other participant, and attempted imitation. A genuine declaration must
+agree with a known reported signer; an other-participant declaration requires a
+known different signer. Imitation may have an unknown signer, but cannot name the
+claimed participant as signer. These are self-reported research labels, not inferred
+authenticity or identity. Check **Synthetic / demonstration capture** when applicable;
+this independent flag is saved in candidate metadata and resets after saving or
+discarding. Demonstration captures do not establish real biometric performance.
+
+Confirm **informed consent** for each capture, sign, and choose **Compare trial
+(without saving)**. Validity errors prevent comparison; capture-quality warnings
+remain advisory. A complete compatible published enrollment (at least five valid
+references for the same input type and reported device IDs) is required. The current
+reference revision, raw candidate, declaration, session and complete matcher settings
+are detached together before worker-thread comparison. The declaration supplies the
+capture's research label in this workflow. SQLite stays on the GUI thread.
+
+Review the experimental decision, median components and per-reference results, then
+choose **Save reviewed trial locally**. Comparison alone writes nothing. The capture
+and declaration are locked during comparison and review so the saved snapshot matches
+the reviewed result. **Discard unsaved trial / Clear** starts over without writing;
+closing an unsaved trial discards it and waits safely for any active comparison.
+After a failed save, the reviewed trial remains available for retry. Successful saving
+atomically inserts the separate raw candidate and immutable trial snapshot, clears
+the canvas, and resets consent for the next capture. It never extends enrollment.
+
+Repeated trials retain the collection session UUID. Use **New session** with an empty
+canvas for a later collection; the optional session note is stored in candidate
+metadata, while trial notes belong to the immutable trial. Dialog reopening starts
+a new session. Session labels alone do not prove collection on different days.
+
+Choose **View Research Trials** to filter by claimed participant and inspect stored
+declarations, consent confirmation, session, notes, reference revision, matcher
+configuration, aggregate result and per-reference diagnostics. **View candidate
+measurements** opens the raw sample viewer at that candidate. Trial snapshots are
+read without rerunning the matcher; the sample viewer's Analyze Sample tab remains
+a descriptive comparison against current profiles. Unreadable trials show an error
+without hiding the remaining records. There is no edit, delete, enrollment-promotion,
+export, upload or automatic trial-saving operation in this workflow.
+
+The SQLite schema stays at version 2. Existing participants, raw measurements,
+reference versions, trials and evaluation records are preserved. All collection
+and inspection stays local. Consent confirmation records a researcher's declaration;
+it is not a consent-management or identity-assurance system.
 
 ## Inspecting samples
 
@@ -294,8 +344,9 @@ Repository transactions use nested savepoints so a downstream failure rolls back
 the entire calling workflow.
 
 Phase 1 supplies persistence and existing-workflow integration. Phase 2 adds
-guided enrollment and later-session extensions; trial collection and the evaluation
-dashboard remain Phases 3 and 4. Ordinary verification still does not save candidates.
+guided enrollment and later-session extensions. Phase 3 adds explicit research
+trial collection and snapshot inspection; the evaluation dashboard remains Phase 4.
+Ordinary verification still does not save candidates.
 Live verification, analysis, enrollment and new trial persistence share the same
 device-compatibility rule. Descriptive profiles now use version 2; archived profile
 snapshots remain intact, and existing participant statistics update only when
@@ -376,8 +427,9 @@ not establish hardware compatibility.
 The first analysis milestone provides capture diagnostics, collection-session
 metadata, personal profiles, overlays and measured explanations. Phase 1 adds
 transactional migration and reproducible reference/trial/evaluation storage.
-Phase 2 adds guided enrollment and later-session extensions. The next steps are
-Phase 3 trial collection and Phase 4 evaluation. Research still requires a
+Phase 2 adds guided enrollment and later-session extensions. Phase 3 adds consented,
+declared trial collection with reviewed immutable snapshots. The next step is
+Phase 4 evaluation. Research still requires a
 **consented, repeatable capture and evaluation protocol**: verify
 devices, sampling rates, repeatability and quality across sessions; then measure
 genuine/impostor distributions, FAR/FRR and EER before changing thresholds.

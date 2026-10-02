@@ -205,10 +205,14 @@ class ResearchTrialRepository:
             raise StoredDataError("Research trial is malformed") from exc
 
     def list_trials(self, claimed_user_id: str | None = None) -> list[ResearchTrial]:
-        rows = self.connection.execute(
-            "SELECT trial_id FROM research_trials WHERE (? IS NULL OR claimed_user_id = ?) ORDER BY created_at, trial_id",
+        return [self.get(row["trial_id"]) for row in self.list_summaries(claimed_user_id)]
+
+    def list_summaries(self, claimed_user_id: str | None = None) -> list:
+        """List selection metadata without decoding every result snapshot."""
+        return self.connection.execute(
+            "SELECT trial_id, created_at, attempt_type FROM research_trials "
+            "WHERE (? IS NULL OR claimed_user_id = ?) ORDER BY created_at, trial_id",
             (claimed_user_id, claimed_user_id)).fetchall()
-        return [self.get(row[0]) for row in rows]
 
 
 class EvaluationRunRepository:
