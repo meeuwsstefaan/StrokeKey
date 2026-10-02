@@ -257,5 +257,8 @@ class EvaluationRunRepository:
             raise StoredDataError("Evaluation snapshot is malformed") from exc
 
     def list_runs(self) -> list[EvaluationRun]:
-        return [self.get(row[0]) for row in self.connection.execute(
-            "SELECT run_id FROM evaluation_runs WHERE sealed = 1 ORDER BY created_at, run_id")]
+        return [self.get(row["run_id"]) for row in self.list_summaries()]
+
+    def list_summaries(self) -> list:
+        return self.connection.execute(
+            "SELECT run_id, name, created_at FROM evaluation_runs WHERE sealed = 1 ORDER BY created_at, run_id").fetchall()

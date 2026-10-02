@@ -10,9 +10,11 @@ from stroke_key.gui.sample_viewer import SampleViewer
 from stroke_key.gui.verification_dialog import VerificationDialog
 from stroke_key.gui.trial_dialog import TrialDialog
 from stroke_key.gui.trial_viewer import TrialViewer
+from stroke_key.gui.evaluation_dialog import EvaluationDialog
 from stroke_key.services.enrollment import EnrollmentService
 from stroke_key.services.verification import VerificationService
 from stroke_key.services.trials import TrialCollectionService
+from stroke_key.services.evaluation import EvaluationService
 from stroke_key.storage.database import Database
 from stroke_key.storage.repositories import SampleRepository, UserRepository
 
@@ -56,8 +58,9 @@ class MainWindow(QMainWindow):
         self.enrollment = EnrollmentService(self.users, self.samples)
         self.verification = VerificationService(self.samples)
         self.trial_collection = TrialCollectionService(database)
+        self.evaluation = EvaluationService(database)
         self.setWindowTitle("StrokeKey")
-        self.resize(620, 600)
+        self.resize(620, 650)
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(45, 35, 45, 35)
@@ -76,6 +79,7 @@ class MainWindow(QMainWindow):
         for text, action in (("Capture Sample", self.capture_sample), ("Enroll User", self.enroll_user),
                              ("Verify Signature", self.verify_signature),
                              ("Collect Research Trial", self.collect_trial), ("View Research Trials", self.view_trials),
+                             ("Evaluate Research Trials", self.evaluate_trials),
                              ("View Samples", self.view_samples),
                              ("Exit", self.close)):
             button = QPushButton(text)
@@ -117,3 +121,9 @@ class MainWindow(QMainWindow):
             TrialViewer(self.trial_collection.trials, self.users.list_users(), self).exec()
         except Exception:
             show_error(self, "Could not open saved research trials. Check the local database.")
+
+    def evaluate_trials(self) -> None:
+        try:
+            EvaluationDialog(self.evaluation, self.users.list_users(), self).exec()
+        except Exception:
+            show_error(self, "Could not open research evaluation. Check the local database.")

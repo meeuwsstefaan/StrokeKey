@@ -41,7 +41,7 @@ python main.py
 
 In PyCharm, run `main.py` with the project's interpreter. A native desktop window
 opens with Capture Sample, Enroll User, Verify Signature, Collect Research Trial,
-View Research Trials, View Samples, and Exit.
+View Research Trials, Evaluate Research Trials, View Samples, and Exit.
 The database is created automatically at `data/strokekey.db`, resolved relative
 to the source project rather than the current working directory. The source
 installation must have a writable `data` directory. No server is needed.
@@ -166,6 +166,66 @@ reference versions, trials and evaluation records are preserved. All collection
 and inspection stays local. Consent confirmation records a researcher's declaration;
 it is not a consent-management or identity-assurance system.
 
+## Phase 4: evaluating saved research trials
+
+Choose **Evaluate Research Trials** to inspect empirical score distributions,
+false acceptance/rejection counts and rates, a threshold sweep, ROC, approximate
+EER and per-claimed-participant counts. The application evaluates the **saved overall
+similarity scores** against each trial's original frozen reference revision; it
+does not rerun DTW, use newer enrollment references, train a model, or change live
+verification settings. Evaluating alone writes nothing.
+
+Select one **exact device / matcher configuration** group. A group includes the
+reported input type and device IDs, matcher version and every saved configuration
+field, including the original threshold. Scores from different groups are never
+silently pooled. Claimed-participant and trial-session selectors narrow the group.
+Choose other-participant attempts, imitation attempts, or both as the impostor
+class; genuine trials remain the positive class. Labels are self-reported.
+
+The default policies exclude unlabelled trials, synthetic/demonstration candidates
+**or enrollment references**, unreadable records, unknown collection-session
+separation, and overlap between a trial session and any session in its frozen
+reference set. Every excluded trial has an audit reason. Synthetic detection uses
+the candidate and reference metadata flags/labels and the synthetic input type;
+it does not infer whether someone supplied real handwriting. Legacy missing session
+metadata stays unknown. Disable session separation or include demonstrations only
+for explicitly exploratory analysis; the displayed and saved reports record those
+choices and show their caveats. Distinct UUIDs do not prove between-day collection.
+
+Set the **evaluation threshold** and choose **Evaluate selection (without saving)**.
+Changing any selection or threshold clears the previous result and disables saving
+until reevaluation. The rule is `score >= threshold`, with equal scores accepted
+together. FAR is accepted impostor trials divided by eligible impostor trials;
+FRR is rejected genuine trials divided by eligible genuine trials. A missing class
+has an unavailable rate (`null` in saved JSON), rather than a fabricated zero. Pooled
+rates are weighted by trial count; per-participant tables show their own denominators.
+Repeated trials share identities and references and are not independent population
+observations. Other-participant and imitation distributions remain separately visible.
+
+The curve samples zero and every unique observed score and includes a separate
+**reject-all** endpoint. This endpoint is recorded with a null threshold and
+`accept_none: true`, because a score of 1 still accepts at threshold 1. ROC requires
+both classes. Approximate EER uses an observed equality when available, or linear
+interpolation between adjacent empirical FAR/FRR points; tied-score jumps can require
+interpolation and do not yield an achievable deterministic operating threshold.
+EER and threshold exploration on this selection are descriptive and must not be
+presented as held-out calibration, security guarantees or validated performance.
+
+Enter a name and choose **Save evaluation run locally** to atomically save the
+selection, exact eligible trial IDs, source matcher configuration, evaluation
+threshold, score/decision audit, exclusions, distributions, curves, metrics and
+caveats. Trial snapshots and raw measurements remain unchanged. No eligible trials
+means no run can be saved; a failed save retains the reviewed result for retry.
+SQLite reads/writes stay on the GUI thread; pure curve calculations run in a worker.
+Closing waits safely for that worker and saves nothing automatically.
+
+The **Saved evaluation runs** tab loads immutable snapshots and their plots without
+recomputing metrics. Adding trials, extending enrollment or changing current
+configuration never updates old runs. Legacy Phase 1 evaluation records remain
+readable as JSON in the audit tab; unsupported plot formats are identified explicitly.
+One unreadable saved run does not hide the remaining runs. The schema remains
+version 2, all data stays local, and no export or network service is added.
+
 ## Inspecting samples
 
 **View Samples** lists persisted records, including enrollment drafts. Select one
@@ -257,7 +317,7 @@ stroke_key/models/         dataclass point, sample, user models and validation
 stroke_key/capture/        device-independent events and monotonic recorder
 stroke_key/processing/     normalization, features, DTW, matcher
 stroke_key/storage/        SQLite schema and repositories
-stroke_key/services/       enrollment and verification workflows
+stroke_key/services/       enrollment, verification, trial and evaluation workflows
 stroke_key/utils/          project-relative paths and development logging
 tests/                     synthetic numerical, persistence and Qt integration tests
 data/                      local database and development log (ignored by Git)
@@ -345,7 +405,8 @@ the entire calling workflow.
 
 Phase 1 supplies persistence and existing-workflow integration. Phase 2 adds
 guided enrollment and later-session extensions. Phase 3 adds explicit research
-trial collection and snapshot inspection; the evaluation dashboard remains Phase 4.
+trial collection and snapshot inspection. Phase 4 adds empirical evaluation and
+immutable named run inspection.
 Ordinary verification still does not save candidates.
 Live verification, analysis, enrollment and new trial persistence share the same
 device-compatibility rule. Descriptive profiles now use version 2; archived profile
@@ -379,9 +440,10 @@ length and bounding-box extent ratios (20%), and stroke-count ratio (10%). Ratio
 use smaller/larger, with two zero values considered equal. Scores are clamped
 to [0, 1]. Verification takes the median across references, with an initial
 threshold of **0.75**. These settings are **experimental and uncalibrated**;
-pressure and tilt are recorded but do not influence acceptance yet. There is no
-claim about FAR, FRR, EER, spoof resistance, identity assurance, or cross-device
-performance. A visually similar trajectory may match despite different dynamics.
+pressure and tilt are recorded but do not influence acceptance yet. Empirical
+evaluation rates describe only the selected labelled trials; no validated FAR,
+FRR, EER, spoof resistance, identity assurance or cross-device performance is
+claimed. A visually similar trajectory may match despite different dynamics.
 
 ## Privacy and security limitations
 
@@ -417,7 +479,10 @@ python -m pip check
 Tests generate synthetic trajectories in temporary databases. They cover
 translation/scaling, timing and stroke preservation, feature edge cases, DTW,
 score bounds, median aggregation, raw persistence, transactions, malformed
-metadata, mouse event capture, enrollment retry, verification and plotting. Qt
+metadata, mouse event capture, enrollment retry, verification and plotting. Evaluation
+tests also cover exact FAR/FRR counts, ties and endpoint thresholds, missing classes,
+empirical EER, session/demo exclusions, isolated matcher/device groups, save rollback,
+archived snapshots, legacy run display and Qt worker shutdown. Qt
 tests run offscreen without extra pytest plugins. Real Windows touch/stylus
 behavior still requires a hardware/driver test; automated synthetic events do
 not establish hardware compatibility.
@@ -428,8 +493,9 @@ The first analysis milestone provides capture diagnostics, collection-session
 metadata, personal profiles, overlays and measured explanations. Phase 1 adds
 transactional migration and reproducible reference/trial/evaluation storage.
 Phase 2 adds guided enrollment and later-session extensions. Phase 3 adds consented,
-declared trial collection with reviewed immutable snapshots. The next step is
-Phase 4 evaluation. Research still requires a
+declared trial collection with reviewed immutable snapshots. Phase 4 adds saved-score
+evaluation, distributions, FAR/FRR, ROC, approximate EER and immutable saved runs.
+All four implementation phases are complete. Research still requires a
 **consented, repeatable capture and evaluation protocol**: verify
 devices, sampling rates, repeatability and quality across sessions; then measure
 genuine/impostor distributions, FAR/FRR and EER before changing thresholds.
