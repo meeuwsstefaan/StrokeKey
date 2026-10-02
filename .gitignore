@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.idea/
+.pytest_cache/
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/*.sqlite3
+data/*.log
+!data/.gitkeep
