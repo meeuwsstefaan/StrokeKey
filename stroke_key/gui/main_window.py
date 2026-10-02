@@ -83,7 +83,10 @@ class MainWindow(QMainWindow):
         CaptureDialog(self.samples, self).exec()
 
     def enroll_user(self) -> None:
-        EnrollmentDialog(self.enrollment, self).exec()
+        try:
+            EnrollmentDialog(self.enrollment, self).exec()
+        except Exception:
+            show_error(self, "Could not load enrollment participants. Check the local database.")
 
     def verify_signature(self) -> None:
         try:

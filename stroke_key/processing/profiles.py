@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from statistics import mean, median, pstdev
 
 from stroke_key.models.signature import SignatureSample, validity_errors
+from stroke_key.processing.compatibility import device_ids, matches_group
 from stroke_key.processing.features import extract_features
 from stroke_key.processing.normalize import normalize_signature
 from stroke_key.processing.quality import assess_quality
 
-PROFILE_VERSION = 1
+PROFILE_VERSION = 2
 
 # label, unit; spatial dynamics use aspect-preserving unit-box coordinates.
 FEATURE_SPECS = {
@@ -24,10 +25,6 @@ FEATURE_SPECS = {
     "average_pressure": ("Mean pressure", "Qt units"),
     "pressure_std": ("Pressure variation", "Qt units"),
 }
-
-
-def device_ids(sample: SignatureSample) -> tuple[str, ...]:
-    return tuple(sorted({p.device_id for p in sample.points if p.device_id is not None}))
 
 
 def profile_features(sample: SignatureSample) -> dict[str, float | None]:
@@ -80,10 +77,9 @@ def summarize_profile(references: list[SignatureSample], device_type: str,
     seen = set()
     for sample in references:
         if (sample.sample_id == exclude_sample_id or sample.sample_id in seen
-                or sample.device_type != device_type or sample.device_type == "mixed"
+                or not matches_group(sample, device_type, target_device_ids)
                 or user_id is not None and sample.user_id != user_id
-                or validity_errors(sample)
-                or target_device_ids and device_ids(sample) and device_ids(sample) != target_device_ids):
+                or validity_errors(sample)):
             continue
         eligible.append(sample)
         seen.add(sample.sample_id)

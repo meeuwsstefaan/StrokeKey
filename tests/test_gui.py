@@ -1,6 +1,7 @@
 """Offscreen Qt integration exercises real events and local synthetic workflows."""
 import os
 import sqlite3
+from threading import Event
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
@@ -222,4 +223,136 @@ def test_viewer_draft_profile_selection_and_corrupt_reference_recovery(app, tmp_
         assert viewer.current_sample.sample_id == draft.sample_id
         viewer.close()
     finally:
+        database.close()
+
+
+def finish_guidance(app, dialog):
+    dialog.start_guidance()
+    assert dialog.worker is not None
+    assert dialog.worker.wait(15_000)
+    app.processEvents()
+    assert dialog.worker is None
+
+
+def test_guided_dialog_additional_samples_and_leave_one_out(app, tmp_path, sample_factory):
+    database = Database(tmp_path / "guided.db")
+    dialog = EnrollmentDialog(EnrollmentService(UserRepository(database), SampleRepository(database)))
+    try:
+        dialog.name.setText("Synthetic guided participant")
+        for index in range(6):
+            dialog.capture.canvas.recorder.points = sample_factory(duration=1 + index / 10).points
+            dialog.save_sample()
+        assert dialog.finish_button.isEnabled()
+        assert dialog.save_button.isEnabled() and dialog.capture.isEnabled()
+        assert not dialog.target_selector.isEnabled()
+        finish_guidance(app, dialog)
+        assert "Compared with 5 compatible references" in dialog.saved_guidance.toPlainText()
+        dialog.capture.canvas.recorder.points = sample_factory(duration=8).points
+        finish_guidance(app, dialog)
+        assert "Duration: 8" in dialog.current_guidance.toPlainText()
+        assert len(dialog.sample_ids) == 6  # Analysis never saves or removes samples.
+        dialog.save_sample()
+        assert len(dialog.sample_ids) == 7
+        dialog.complete()
+        assert dialog.result() == dialog.DialogCode.Accepted
+        assert dialog.service.users.list_users()[0].enrollment_statistics["sample_count"] == 7
+    finally:
+        dialog.close()
+        database.close()
+
+
+def test_guided_dialog_existing_participant_later_session(app, tmp_path, sample_factory):
+    from stroke_key.storage.research_repositories import ReferenceSetRepository
+    database = Database(tmp_path / "extend-gui.db")
+    service = EnrollmentService(UserRepository(database), SampleRepository(database))
+    originals = [sample_factory() for _ in range(5)]
+    for sample in originals:
+        sample.device_type = "mouse"
+        sample.metadata["session_id"] = "original-session"
+        service.stage(sample)
+    user = service.complete("Synthetic existing participant", [s.sample_id for s in originals])
+    references = ReferenceSetRepository(database)
+    first = references.latest_for_user(user.user_id)[0]
+    dialog = EnrollmentDialog(service)
+    try:
+        dialog.target_selector.setCurrentIndex(dialog.target_selector.findData(user.user_id))
+        assert not dialog.name.isEnabled()
+        assert not dialog.finish_button.isEnabled()
+        assert "5 existing" in dialog.progress.text()
+        dialog.capture.canvas.recorder.points = sample_factory().points
+        dialog.save_sample()
+        assert dialog.finish_button.isEnabled()
+        assert dialog.finish_button.text() == "Add to Enrollment"
+        # Programmatic switching also cannot change the owner of pending drafts.
+        dialog.target_selector.setCurrentIndex(0)
+        assert dialog.target_selector.currentData() == user.user_id
+        finish_guidance(app, dialog)
+        assert "Compared with 5 compatible references" in dialog.saved_guidance.toPlainText()
+        dialog.complete()
+        updated = service.users.get(user.user_id)
+        assert updated.enrollment_statistics["sample_count"] == 6
+        assert updated.enrollment_statistics["signing_profiles"][0]["session_count"] == 2
+        assert references.get(first.reference_set_id) == first
+        assert references.latest_for_user(user.user_id)[0].revision == 2
+    finally:
+        dialog.close()
+        database.close()
+
+
+def test_completion_keeps_unsaved_capture_until_explicit_save_or_clear(app, tmp_path, sample_factory, monkeypatch):
+    messages = []
+    monkeypatch.setattr("stroke_key.gui.enrollment_dialog.show_error", lambda parent, text: messages.append(text))
+    database = Database(tmp_path / "unsaved.db")
+    dialog = EnrollmentDialog(EnrollmentService(UserRepository(database), SampleRepository(database)))
+    try:
+        dialog.name.setText("Synthetic")
+        for _ in range(5):
+            dialog.capture.canvas.recorder.points = sample_factory().points
+            dialog.save_sample()
+        dialog.capture.canvas.recorder.points = sample_factory().points
+        dialog.complete()
+        assert messages and "clear it" in messages[-1]
+        assert not dialog.service.users.list_users()
+        assert len(dialog.capture.canvas.recorder.points) == 60
+        dialog.capture.canvas.clear()
+        dialog.complete()
+        assert len(dialog.service.users.list_users()) == 1
+    finally:
+        dialog.close()
+        database.close()
+
+
+def test_enrollment_worker_defers_close_until_finished(app, tmp_path, sample_factory, monkeypatch):
+    from stroke_key.processing.enrollment_guidance import assess_enrollment
+    started, release = Event(), Event()
+
+    def slow_analysis(candidate, references):
+        started.set()
+        assert release.wait(5)
+        return assess_enrollment(candidate, references)
+
+    monkeypatch.setattr("stroke_key.gui.enrollment_dialog.assess_enrollment", slow_analysis)
+    database = Database(tmp_path / "worker-close.db")
+    dialog = EnrollmentDialog(EnrollmentService(UserRepository(database), SampleRepository(database)))
+    try:
+        dialog.show()
+        app.processEvents()
+        dialog.capture.canvas.recorder.points = sample_factory().points
+        dialog.start_guidance()
+        assert started.wait(2)
+        worker = dialog.worker
+        dialog.reject()
+        assert dialog.isVisible()
+        assert not dialog.isEnabled()
+        release.set()
+        assert worker.wait(15_000)
+        app.processEvents()
+        assert dialog.worker is None
+        assert not dialog.isVisible()
+    finally:
+        release.set()
+        if dialog.worker is not None:
+            dialog.worker.wait(15_000)
+            app.processEvents()
+        dialog.close()
         database.close()

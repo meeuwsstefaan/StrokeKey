@@ -150,7 +150,7 @@ def test_enrollment_persists_versioned_profiles_and_session_metadata(tmp_path, s
         user = service.complete("Synthetic participant", [s.sample_id for s in references])
         stored = users.list_users()[0]
         assert stored.user_id == user.user_id
-        assert stored.enrollment_statistics["analysis_profile_version"] == 1
+        assert stored.enrollment_statistics["analysis_profile_version"] == 2
         profile = stored.enrollment_statistics["signing_profiles"][0]
         assert len(profile["reference_ids"]) == 5
         assert profile["session_count"] == 1

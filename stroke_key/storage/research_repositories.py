@@ -7,7 +7,7 @@ from statistics import median
 from stroke_key.config import CAPTURE_CONFIG, MatchConfig
 from stroke_key.models.research import EvaluationRun, ReferenceSet, ResearchTrial, new_id, utc_now
 from stroke_key.models.signature import SignatureSample, validity_errors
-from stroke_key.processing.profiles import device_ids
+from stroke_key.processing.compatibility import device_ids, input_group, matches_group
 from stroke_key.storage.database import Database
 from stroke_key.storage.migrations import device_group
 from stroke_key.storage.repositories import SampleRepository, StoredDataError, decode_object
@@ -39,7 +39,7 @@ class ReferenceSetRepository:
         with atomic(self.connection):
             samples = [self.samples.get(sample_id) for sample_id in sample_ids]
             input_type, ids = samples[0].device_type, device_ids(samples[0])
-            if any(s.user_id != user_id or s.device_type != input_type or device_ids(s) != ids
+            if any(s.user_id != user_id or not matches_group(s, input_type, ids)
                    or validity_errors(s) or self.samples.is_trial(s.sample_id) for s in samples):
                 raise ValueError("References must be valid enrollment samples from one participant and device group")
             group = device_group(input_type, ids)
@@ -147,8 +147,9 @@ class ResearchTrialRepository:
         if trial.attempt_type == "other_participant" and trial.actual_signer_id is None:
             raise ValueError("Other-participant trials require a reported signer")
         reference = self.references.get(trial.reference_set_id)
-        if (reference.user_id != trial.claimed_user_id or reference.device_type != candidate.device_type
-                or reference.device_ids != device_ids(candidate)):
+        compatible = (matches_group(candidate, reference.device_type, reference.device_ids) if for_save
+                      else input_group(candidate) == (reference.device_type, reference.device_ids))
+        if reference.user_id != trial.claimed_user_id or not compatible:
             raise ValueError("Claim and candidate device must match the frozen reference set")
         if for_save and len(reference.sample_ids) < CAPTURE_CONFIG.enrollment_samples:
             raise ValueError("Trial requires a complete compatible enrollment reference set")

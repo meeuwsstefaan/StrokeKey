@@ -62,12 +62,44 @@ the OS, Qt, device, and driver; these are not hardware sensor timestamps.
 
 ## Enrollment
 
-Choose **Enroll User**, enter a research participant name, and capture **five**
-valid samples. Each **Save Sample** writes an unassigned draft immediately and
-shows its point count, duration, and strokes. Select a saved sample and choose
-**Retry selected saved sample** to delete that draft and draw a replacement.
-After five samples, choose **Complete Enrollment**. The identity, associations,
-and duration/path/stroke statistics are committed transactionally.
+Choose **Enroll User**, leave **Participant** set to **New participant**, enter a
+research participant name, and capture **at least five compatible samples**.
+**Keep and save sample** writes an unassigned draft immediately. Capture and
+consistency warnings are advisory: valid unusual samples can be kept. Select a
+saved draft and choose **Retry selected saved sample** to explicitly delete that
+draft and draw a replacement. Published enrollment references cannot be retried.
+
+The **Current capture** tab provides feedback after pointer release, before saving.
+The **Selected saved sample** tab compares that draft against the other references
+and excludes the selected sample itself. Reports show sampling quality and measured
+differences in duration, speed, pauses and normalized geometry, along with missing
+sensor and limited-session caveats. At least two other compatible references are
+needed for useful range guidance. Differences can be normal variation; sign
+naturally rather than trying to reproduce a fixed pattern. Guidance runs in a
+worker thread, with SQLite reads/writes on the GUI thread. Closing during analysis
+waits for the worker to finish safely.
+
+Each input type and exact set of reported device IDs forms a separate group.
+Unknown device IDs only match other unknown IDs. Each group included in an initial
+enrollment needs at least five valid samples; four mouse samples plus one stylus
+sample do not meet that minimum. Once ready, you may keep capturing extra samples
+or choose **Complete Enrollment**. Participant creation, draft association,
+versioned reference publication and descriptive profile statistics commit together.
+Unsaved captures must be explicitly saved or cleared before completing.
+
+To add a later collection session, reopen **Enroll User** and select an existing
+participant. A new session UUID is generated for the dialog. Capture and save
+additional natural samples, then choose **Add to Enrollment**. Existing compatible
+references count toward the minimum, so an established group may accept a smaller
+new batch; a new device group still needs five references. The participant selector
+locks while drafts are pending to prevent accidental reassignment. New groups and
+extensions publish new reference versions and refresh profile statistics atomically.
+Old versions, raw measurements, trial results and evaluation runs remain unchanged.
+
+Enrollment offers unlabelled, genuine and synthetic/demonstration research labels;
+captures declared as impostor attempts cannot be enrolled. Session labels alone
+do not establish real between-day variation: collect sessions at meaningful
+separate times. Mixed-input captures cannot become new enrollment references.
 
 Closing early retains unassigned drafts, visible in View Samples; they are not
 verification references and are not automatically resumed in a later enrollment.
@@ -77,7 +109,7 @@ The application ships with no enrolled identities or real biometric demo data.
 ## Verification
 
 Choose **Verify Signature**, select an enrolled user, sign, and press **Verify**.
-All valid enrollment references are compared. The result shows median overall
+All compatible valid enrollment references are compared. The result shows median overall
 similarity, experimental ACCEPTED/REJECTED, DTW, duration, geometry, and stroke
 similarities, plus each reference's overall/DTW scores, durations and stroke counts.
 No enrolled users produces an explanatory empty state. Missing or malformed
@@ -112,7 +144,7 @@ confidence score, or evidence of authenticity. At least two eligible references
 are required for range comparisons. Five samples from one session cannot establish
 normal variation across days.
 
-Profiles compare the same input type, reject known device-ID mismatches, and skip
+Profiles compare the same input type and matching reported device IDs, and skip
 invalid or unreadable references. Spatial features and speeds use aspect-preserving
 unit-box normalization; duration and pauses retain their actual seconds. Pauses
 use the existing raw-pixel speed heuristic. Pressure comparisons additionally
@@ -235,7 +267,7 @@ The additional tables are:
 Migration publishes initial reference sets for existing enrollments without
 reinterpreting or repairing the raw data. New enrollment completion publishes
 reference sets atomically with participant creation and sample association.
-Verification reads the latest published revision of each enrollment device group.
+Verification reads the latest published revision of the candidate's matching device group.
 Publishing another revision leaves all older versions intact; merely saving an
 assigned sample does not automatically add it to live verification.
 
@@ -261,9 +293,13 @@ must be finite; unavailable evaluation rates should use `null` rather than NaN.
 Repository transactions use nested savepoints so a downstream failure rolls back
 the entire calling workflow.
 
-Phase 1 supplies persistence and existing-workflow integration. The guided
-enrollment interface, trial-collection interface and evaluation dashboard remain
-the next three phases. Ordinary verification still does not save candidates.
+Phase 1 supplies persistence and existing-workflow integration. Phase 2 adds
+guided enrollment and later-session extensions; trial collection and the evaluation
+dashboard remain Phases 3 and 4. Ordinary verification still does not save candidates.
+Live verification, analysis, enrollment and new trial persistence share the same
+device-compatibility rule. Descriptive profiles now use version 2; archived profile
+snapshots remain intact, and existing participant statistics update only when
+their enrollment is explicitly extended.
 
 ## Features and current matching algorithm
 
@@ -340,7 +376,7 @@ not establish hardware compatibility.
 The first analysis milestone provides capture diagnostics, collection-session
 metadata, personal profiles, overlays and measured explanations. Phase 1 adds
 transactional migration and reproducible reference/trial/evaluation storage.
-Phase 2 will add guided enrollment and later-session extensions, followed by
+Phase 2 adds guided enrollment and later-session extensions. The next steps are
 Phase 3 trial collection and Phase 4 evaluation. Research still requires a
 **consented, repeatable capture and evaluation protocol**: verify
 devices, sampling rates, repeatability and quality across sessions; then measure

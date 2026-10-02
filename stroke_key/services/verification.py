@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 
 from stroke_key.models.signature import SignatureSample, validity_errors
+from stroke_key.config import CAPTURE_CONFIG
+from stroke_key.processing.compatibility import compatible_inputs
 from stroke_key.processing.matcher import MatchResult, aggregate_matches, compare_signatures
 from stroke_key.storage.repositories import SampleRepository
 
@@ -26,9 +28,10 @@ class VerificationService:
         errors = validity_errors(candidate)
         if errors:
             raise ValueError("\n".join(errors))
-        references = self.samples.enrollment_references(user_id)
-        if len(references) < 5 or any(validity_errors(reference) for reference in references):
-            raise ValueError("This user does not have a complete valid enrollment.")
+        references = [sample for sample in self.samples.enrollment_references(user_id)
+                      if compatible_inputs(candidate, sample)]
+        if len(references) < CAPTURE_CONFIG.enrollment_samples or any(validity_errors(reference) for reference in references):
+            raise ValueError("This user does not have a complete valid enrollment for this input type and reported device.")
         return references
 
     def verify(self, user_id: str, candidate: SignatureSample) -> VerificationReport:

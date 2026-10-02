@@ -105,6 +105,31 @@ class UserRepository:
         return [User(r["name"], r["user_id"], r["created_at"], decode_object(r["enrollment_statistics"]))
                 for r in self.connection.execute("SELECT * FROM users ORDER BY name")]
 
+    def get(self, user_id: str) -> User:
+        row = self.connection.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise StoredDataError("Participant no longer exists")
+        return User(row["name"], row["user_id"], row["created_at"], decode_object(row["enrollment_statistics"]))
+
+    def attach_drafts(self, user_id: str, sample_ids: list[str]) -> None:
+        """Attach explicit drafts; the caller publishes versions in the same transaction."""
+        with atomic(self.connection):
+            self.get(user_id)
+            for sample_id in sample_ids:
+                cursor = self.connection.execute(
+                    "UPDATE signature_samples SET user_id = ? WHERE sample_id = ? AND user_id IS NULL "
+                    "AND NOT EXISTS (SELECT 1 FROM research_trials WHERE candidate_sample_id = ?)",
+                    (user_id, sample_id, sample_id))
+                if cursor.rowcount != 1:
+                    raise ValueError("An enrollment draft is missing or already assigned")
+
+    def update_statistics(self, user_id: str, statistics: dict) -> None:
+        with atomic(self.connection):
+            cursor = self.connection.execute("UPDATE users SET enrollment_statistics = ? WHERE user_id = ?",
+                                             (json.dumps(statistics, allow_nan=False), user_id))
+            if cursor.rowcount != 1:
+                raise StoredDataError("Participant no longer exists")
+
     def enroll(self, user: User, samples: list[SignatureSample]) -> None:
         """Associate staged samples and identity atomically; failure leaves drafts intact."""
         from stroke_key.storage.research_repositories import ReferenceSetRepository
