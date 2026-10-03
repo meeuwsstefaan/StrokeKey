@@ -1,3 +1,5 @@
+![StrokeKey application](StrokeKey.jpg)
+
 # StrokeKey
 
 **Dynamic Signature Research Prototype** — a new, local Python implementation
